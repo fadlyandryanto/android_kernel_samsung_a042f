@@ -1497,14 +1497,14 @@ static int kvm_try_get_pfn(kvm_pfn_t pfn)
 }
 
 static int hva_to_pfn_remapped(struct vm_area_struct *vma,
-			       unsigned long addr, bool *async,
-			       bool write_fault, bool *writable,
-			       kvm_pfn_t *p_pfn)
+                   unsigned long addr, bool *async,
+                   bool write_fault, bool *writable,
+                   kvm_pfn_t *p_pfn)
 {
-	kvm_pfn_t pfn;
-	pte_t *ptep;
-	spinlock_t *ptl;
-	int r;
+    unsigned long pfn;
+    pte_t *ptep;
+    spinlock_t *ptl;
+    int r;
 
 	r = follow_pte_pmd(vma->vm_mm, addr, NULL, NULL, &ptep, NULL, &ptl);
 	if (r) {
