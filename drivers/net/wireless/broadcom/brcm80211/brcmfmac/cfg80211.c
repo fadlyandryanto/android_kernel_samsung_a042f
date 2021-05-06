@@ -2615,7 +2615,7 @@ brcmf_cfg80211_get_station(struct wiphy *wiphy, struct net_device *ndev,
 			if (sta_info_le.rssi[i] == 0 ||
 			    sta_info_le.rx_lastpkt_rssi[i] == 0)
 				continue;
-			sinfo->chains |= BIT(count_rssi);
+			sinfo->chains |= BIT(i);
 			sinfo->chain_signal[count_rssi] =
 				sta_info_le.rx_lastpkt_rssi[i];
 			sinfo->chain_signal_avg[count_rssi] =
