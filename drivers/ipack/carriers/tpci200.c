@@ -599,17 +599,17 @@ static int tpci200_pci_probe(struct pci_dev *pdev,
 	return 0;
 
 err_tpci200_install:
-	tpci200_uninstall(tpci200);
+    tpci200_uninstall(tpci200);
 err_cfg_regs:
-	pci_iounmap(tpci200->info->pdev, tpci200->info->cfg_regs);
+    pci_iounmap(tpci200->info->pdev, tpci200->info->cfg_regs);
 err_request_region:
-	pci_release_region(pdev, TPCI200_CFG_MEM_BAR);
+    pci_release_region(pdev, TPCI200_CFG_MEM_BAR);
 err_tpci200_info:
-	kfree(tpci200->info);
-	pci_dev_put(pdev);
+    kfree(tpci200->info);
+    pci_dev_put(pdev);
 err_tpci200:
-	kfree(tpci200);
-	return ret;
+    kfree(tpci200);
+    return ret;
 }
 
 static void __tpci200_pci_remove(struct tpci200_board *tpci200)
