@@ -243,46 +243,45 @@ restart:
 			 * cleared *pmd but not decremented compound_mapcount().
 			 */
 			if ((pvmw->flags & PVMW_SYNC) &&
-			    PageTransCompound(page)) {
+				PageTransCompound(pvmw->page)) {
 				spinlock_t *ptl = pmd_lock(mm, pvmw->pmd);
 
 				spin_unlock(ptl);
 			}
-			step_forward(pvmw, PMD_SIZE);
-			continue;
+			return false;
 		}
 		if (!map_pte(pvmw))
 			goto next_pte;
-this_pte:
-		if (check_pte(pvmw))
-			return true;
+		while (1) {
+			if (check_pte(pvmw))
+				return true;
 next_pte:
-		do {
-			pvmw->address += PAGE_SIZE;
-			if (pvmw->address >= end)
-				return not_found(pvmw);
-			/* Did we cross page table boundary? */
-			if ((pvmw->address & (PMD_SIZE - PAGE_SIZE)) == 0) {
-				if (pvmw->ptl) {
-					spin_unlock(pvmw->ptl);
-					pvmw->ptl = NULL;
+			do {
+				pvmw->address += PAGE_SIZE;
+				if (pvmw->address >= end)
+					return not_found(pvmw);
+				/* Did we cross page table boundary? */
+				if ((pvmw->address & (PMD_SIZE - PAGE_SIZE)) == 0) {
+					if (pvmw->ptl) {
+						spin_unlock(pvmw->ptl);
+						pvmw->ptl = NULL;
+					}
+					pte_unmap(pvmw->pte);
+					pvmw->pte = NULL;
+					goto restart;
 				}
-				pte_unmap(pvmw->pte);
-				pvmw->pte = NULL;
-				goto restart;
-			}
-			pvmw->pte++;
-			if ((pvmw->flags & PVMW_SYNC) && !pvmw->ptl) {
+				pvmw->pte++;
+				if ((pvmw->flags & PVMW_SYNC) && !pvmw->ptl) {
+					pvmw->ptl = pte_lockptr(mm, pvmw->pmd);
+					spin_lock(pvmw->ptl);
+				}
+			} while (pte_none(*pvmw->pte));
+
+			if (!pvmw->ptl) {
 				pvmw->ptl = pte_lockptr(mm, pvmw->pmd);
 				spin_lock(pvmw->ptl);
 			}
-		} while (pte_none(*pvmw->pte));
-
-		if (!pvmw->ptl) {
-			pvmw->ptl = pte_lockptr(mm, pvmw->pmd);
-			spin_lock(pvmw->ptl);
 		}
-		goto this_pte;
 	} while (pvmw->address < end);
 
 	return false;
