@@ -758,8 +758,6 @@ unsigned long page_address_in_vma(struct page *page, struct vm_area_struct *vma)
 			return -EFAULT;
 	} else if (!vma->vm_file) {
 		return -EFAULT;
-	} else if (vma->vm_file->f_mapping != compound_head(page)->mapping) {
-		return -EFAULT;
 	}
 
 	return vma_address(page, vma);
