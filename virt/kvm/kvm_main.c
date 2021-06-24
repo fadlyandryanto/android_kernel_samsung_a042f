@@ -1491,9 +1491,9 @@ static bool vma_is_valid(struct vm_area_struct *vma, bool write_fault)
 
 static int kvm_try_get_pfn(kvm_pfn_t pfn)
 {
-	if (kvm_is_reserved_pfn(pfn))
-		return 1;
-	return get_page_unless_zero(pfn_to_page(pfn));
+    if (kvm_is_reserved_pfn(pfn))
+        return 1;
+    return get_page_unless_zero(pfn_to_page(pfn));
 }
 
 static int hva_to_pfn_remapped(struct vm_area_struct *vma,
