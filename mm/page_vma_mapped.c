@@ -252,38 +252,32 @@ restart:
 		}
 		if (!map_pte(pvmw))
 			goto next_pte;
-		while (1) {
-			unsigned long end;
-
-			if (check_pte(pvmw))
-				return true;
+this_pte:
+		if (check_pte(pvmw))
+			return true;
 next_pte:
-			/* Seek to next pte only makes sense for THP */
-			if (!PageTransHuge(page))
+		do {
+			pvmw->address += PAGE_SIZE;
+			if (pvmw->address >= end)
 				return not_found(pvmw);
-			end = vma_address_end(page, pvmw->vma);
-			do {
-				pvmw->address += PAGE_SIZE;
-				if (pvmw->address >= end)
-					return not_found(pvmw);
-				/* Did we cross page table boundary? */
-				if (pvmw->address % PMD_SIZE == 0) {
-					pte_unmap(pvmw->pte);
-					if (pvmw->ptl) {
-						spin_unlock(pvmw->ptl);
-						pvmw->ptl = NULL;
-					}
-					goto restart;
-				} else {
-					pvmw->pte++;
+			/* Did we cross page table boundary? */
+			if (pvmw->address % PMD_SIZE == 0) {
+				pte_unmap(pvmw->pte);
+				if (pvmw->ptl) {
+					spin_unlock(pvmw->ptl);
+					pvmw->ptl = NULL;
 				}
-			} while (pte_none(*pvmw->pte));
-
-			if (!pvmw->ptl) {
-				pvmw->ptl = pte_lockptr(mm, pvmw->pmd);
-				spin_lock(pvmw->ptl);
+				goto restart;
+			} else {
+				pvmw->pte++;
 			}
+		} while (pte_none(*pvmw->pte));
+
+		if (!pvmw->ptl) {
+			pvmw->ptl = pte_lockptr(mm, pvmw->pmd);
+			spin_lock(pvmw->ptl);
 		}
+		goto this_pte;
 	} while (pvmw->address < end);
 
 	return false;
