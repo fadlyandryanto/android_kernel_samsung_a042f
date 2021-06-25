@@ -1118,10 +1118,15 @@ bool kthread_mod_delayed_work(struct kthread_worker *worker,
 	 * only when it can be queued again so that the return value can
 	 * be used for reference counting.
 	 */
-	kthread_cancel_delayed_work_timer(work, &flags);
-	if (work->canceling)
+	/* Prepare for possible cancelation */
+	work->canceling++;
+	if (list_empty(&work->node)) {
+		work->canceling--;
 		goto out;
+	}
+
 	ret = __kthread_cancel_work(work, true, &flags);
+	work->canceling--;
 
 fast_queue:
 	__kthread_queue_delayed_work(worker, dwork, delay);
