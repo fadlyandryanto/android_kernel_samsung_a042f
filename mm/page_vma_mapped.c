@@ -243,7 +243,7 @@ restart:
 			 * cleared *pmd but not decremented compound_mapcount().
 			 */
 			if ((pvmw->flags & PVMW_SYNC) &&
-			    PageTransCompound(pvmw->page)) {
+			    PageTransCompound(page)) {
 				spinlock_t *ptl = pmd_lock(mm, pvmw->pmd);
 
 				spin_unlock(ptl);
@@ -259,9 +259,9 @@ restart:
 				return true;
 next_pte:
 			/* Seek to next pte only makes sense for THP */
-			if (!PageTransHuge(pvmw->page) || PageHuge(pvmw->page))
+			if (!PageTransHuge(page) || PageHuge(page))
 				return not_found(pvmw);
-			end = vma_address_end(pvmw->page, pvmw->vma);
+			end = vma_address_end(page, pvmw->vma);
 			do {
 				pvmw->address += PAGE_SIZE;
 				if (pvmw->address >= end)
