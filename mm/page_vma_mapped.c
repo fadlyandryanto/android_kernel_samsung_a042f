@@ -259,7 +259,7 @@ restart:
 				return true;
 next_pte:
 			/* Seek to next pte only makes sense for THP */
-			if (!PageTransHuge(page) || PageHuge(page))
+			if (!PageTransHuge(page))
 				return not_found(pvmw);
 			end = vma_address_end(page, pvmw->vma);
 			do {
