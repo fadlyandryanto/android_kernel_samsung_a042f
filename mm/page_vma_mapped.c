@@ -248,8 +248,7 @@ restart:
 
 				spin_unlock(ptl);
 			}
-			step_forward(pvmw, PMD_SIZE);
-			continue;
+			return false;
 		}
 		if (!map_pte(pvmw))
 			goto next_pte;
@@ -271,6 +270,10 @@ next_pte:
 				goto restart;
 			} else {
 				pvmw->pte++;
+				if ((pvmw->flags & PVMW_SYNC) && !pvmw->ptl) {
+					pvmw->ptl = pte_lockptr(mm, pvmw->pmd);
+					spin_lock(pvmw->ptl);
+				}
 			}
 		} while (pte_none(*pvmw->pte));
 
