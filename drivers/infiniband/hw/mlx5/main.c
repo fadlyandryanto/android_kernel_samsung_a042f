@@ -5525,8 +5525,6 @@ static void mlx5_ib_cleanup_multiport_master(struct mlx5_ib_dev *dev)
 				list_add_tail(&dev->port[i].mp.mpi->list,
 					      &mlx5_ib_unaffiliated_port_list);
 				mlx5_ib_unbind_slave_port(dev, dev->port[i].mp.mpi);
-				list_add_tail(&dev->port[i].mp.mpi->list,
-					      &mlx5_ib_unaffiliated_port_list);
 			}
 		}
 	}
