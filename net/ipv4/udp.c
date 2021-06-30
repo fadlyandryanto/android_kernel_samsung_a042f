@@ -2642,23 +2642,23 @@ int udp_lib_setsockopt(struct sock *sk, int level, int optname,
 		break;
 
 	case UDP_SEGMENT:
-		if (val < 0 || val > USHRT_MAX)
-			return -EINVAL;
-		WRITE_ONCE(up->gso_size, val);
-		break;
+        if (val < 0 || val > USHRT_MAX)
+            return -EINVAL;
+        WRITE_ONCE(up->gso_size, val);
+        break;
 
-	case UDP_GRO:
-		lock_sock(sk);
-		if (val == 0xEAEA) {
-			up->gro_disabled = UDP_GRO_DISABLED;
-		} else {
-			up->gro_disabled = 0;
-			if (valbool)
-				udp_tunnel_encap_enable(sk->sk_socket);
-			up->gro_enabled = valbool;
-		}
-		release_sock(sk);
-		break;
+    case UDP_GRO:
+        lock_sock(sk);
+        if (val == 0xEAEA) {
+            up->gro_disabled = UDP_GRO_DISABLED;
+        } else {
+            up->gro_disabled = 0;
+            if (valbool)
+                udp_tunnel_encap_enable(sk->sk_socket);
+            up->gro_enabled = valbool;
+        }
+        release_sock(sk);
+        break;
 
 	/*
 	 * 	UDP-Lite's partial checksum coverage (RFC 3828).
