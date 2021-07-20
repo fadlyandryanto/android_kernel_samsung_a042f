@@ -880,19 +880,17 @@ int sctp_auth_set_key(struct sctp_endpoint *ep,
 	memcpy(key->data, &auth_key->sca_key[0], auth_key->sca_keylength);
 	cur_key->key = key;
 
-	if (!replace) {
-		list_add(&cur_key->key_list, sh_keys);
-		return 0;
-	}
+    if (replace) {
+        list_del_init(&shkey->key_list);
+        sctp_auth_shkey_release(shkey);
+    }
 
-	list_del_init(&shkey->key_list);
-	sctp_auth_shkey_release(shkey);
-	list_add(&cur_key->key_list, sh_keys);
+    list_add(&cur_key->key_list, sh_keys);
 
-	if (asoc && asoc->active_key_id == auth_key->sca_keynumber)
-		sctp_auth_asoc_init_active_key(asoc, GFP_KERNEL);
+    if (asoc && asoc->active_key_id == auth_key->sca_keynumber)
+        sctp_auth_asoc_init_active_key(asoc, GFP_KERNEL);
 
-	return 0;
+    return 0;
 }
 
 int sctp_auth_set_active_key(struct sctp_endpoint *ep,
