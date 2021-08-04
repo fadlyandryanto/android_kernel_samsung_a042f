@@ -59,6 +59,17 @@ struct hci_pinfo {
 	char              comm[TASK_COMM_LEN];
 };
 
+static struct hci_dev *hci_hdev_from_sock(struct sock *sk)
+{
+	struct hci_dev *hdev = hci_pi(sk)->hdev;
+
+	if (!hdev)
+		return ERR_PTR(-EBADFD);
+	if (hci_dev_test_flag(hdev, HCI_UNREGISTER))
+		return ERR_PTR(-EPIPE);
+	return hdev;
+}
+
 void hci_sock_set_flag(struct sock *sk, int nr)
 {
 	set_bit(nr, &hci_pi(sk)->flags);
@@ -752,19 +763,13 @@ void hci_sock_dev_event(struct hci_dev *hdev, int event)
 	if (event == HCI_DEV_UNREG) {
 		struct sock *sk;
 
-		/* Detach sockets from device */
+		/* Wake up sockets using this dead device */
 		read_lock(&hci_sk_list.lock);
 		sk_for_each(sk, &hci_sk_list.head) {
-			lock_sock(sk);
 			if (hci_pi(sk)->hdev == hdev) {
-				hci_pi(sk)->hdev = NULL;
 				sk->sk_err = EPIPE;
-				sk->sk_state = BT_OPEN;
 				sk->sk_state_change(sk);
-
-				hci_dev_put(hdev);
 			}
-			release_sock(sk);
 		}
 		read_unlock(&hci_sk_list.lock);
 	}
@@ -925,10 +930,10 @@ static int hci_sock_blacklist_del(struct hci_dev *hdev, void __user *arg)
 static int hci_sock_bound_ioctl(struct sock *sk, unsigned int cmd,
 				unsigned long arg)
 {
-	struct hci_dev *hdev = hci_pi(sk)->hdev;
+	struct hci_dev *hdev = hci_hdev_from_sock(sk);
 
-	if (!hdev)
-		return -EBADFD;
+	if (IS_ERR(hdev))
+		return PTR_ERR(hdev);
 
 	if (hci_dev_test_flag(hdev, HCI_USER_CHANNEL))
 		return -EBUSY;
@@ -1063,288 +1068,299 @@ done:
 }
 
 static int hci_sock_bind(struct socket *sock, struct sockaddr *addr,
-			 int addr_len)
+             int addr_len)
 {
     /*
-	struct sockaddr_hci haddr;
-	struct sock *sk = sock->sk;
-	struct hci_dev *hdev = NULL;
-	struct sk_buff *skb;
-	int len, err = 0;
+    struct sockaddr_hci haddr;
+    struct sock *sk = sock->sk;
+    struct hci_dev *hdev = NULL;
+    struct sk_buff *skb;
+    int len, err = 0;
 
-	BT_DBG("sock %p sk %p", sock, sk);
+    BT_DBG("sock %p sk %p", sock, sk);
 
-	if (!addr)
-		return -EINVAL;
+    if (!addr)
+        return -EINVAL;
 
-	memset(&haddr, 0, sizeof(haddr));
-	len = min_t(unsigned int, sizeof(haddr), addr_len);
-	memcpy(&haddr, addr, len);
+    memset(&haddr, 0, sizeof(haddr));
+    len = min_t(unsigned int, sizeof(haddr), addr_len);
+    memcpy(&haddr, addr, len);
 
-	if (haddr.hci_family != AF_BLUETOOTH)
-		return -EINVAL;
+    if (haddr.hci_family != AF_BLUETOOTH)
+        return -EINVAL;
 
-	lock_sock(sk);
+    lock_sock(sk);
 
-	if (sk->sk_state == BT_BOUND) {
-		err = -EALREADY;
-		goto done;
-	}
+    // Allow detaching from dead device and attaching to alive device, if the caller wants to
+    // re-bind (instead of close) this socket in response to hci_sock_dev_event(HCI_DEV_UNREG)
+    // notification.
+    hdev = hci_pi(sk)->hdev;
+    if (hdev && hci_dev_test_flag(hdev, HCI_UNREGISTER)) {
+        hci_pi(sk)->hdev = NULL;
+        sk->sk_state = BT_OPEN;
+        hci_dev_put(hdev);
+    }
+    hdev = NULL;
 
-	switch (haddr.hci_channel) {
-	case HCI_CHANNEL_RAW:
-		if (hci_pi(sk)->hdev) {
-			err = -EALREADY;
-			goto done;
-		}
+    if (sk->sk_state == BT_BOUND) {
+        err = -EALREADY;
+        goto done;
+    }
 
-		if (haddr.hci_dev != HCI_DEV_NONE) {
-			hdev = hci_dev_get(haddr.hci_dev);
-			if (!hdev) {
-				err = -ENODEV;
-				goto done;
-			}
+    switch (haddr.hci_channel) {
+    case HCI_CHANNEL_RAW:
+        if (hci_pi(sk)->hdev) {
+            err = -EALREADY;
+            goto done;
+        }
 
-			atomic_inc(&hdev->promisc);
-		}
+        if (haddr.hci_dev != HCI_DEV_NONE) {
+            hdev = hci_dev_get(haddr.hci_dev);
+            if (!hdev) {
+                err = -ENODEV;
+                goto done;
+            }
 
-		hci_pi(sk)->channel = haddr.hci_channel;
+            atomic_inc(&hdev->promisc);
+        }
 
-		if (!hci_sock_gen_cookie(sk)) {
-			// In the case when a cookie has already been assigned,
-			// then there has been already an ioctl issued against
-			// an unbound socket and with that triggered an open
-			// notification. Send a close notification first to
-			// allow the state transition to bounded.
+        hci_pi(sk)->channel = haddr.hci_channel;
 
-			skb = create_monitor_ctrl_close(sk);
-			if (skb) {
-				hci_send_to_channel(HCI_CHANNEL_MONITOR, skb,
-						    HCI_SOCK_TRUSTED, NULL);
-				kfree_skb(skb);
-			}
-		}
+        if (!hci_sock_gen_cookie(sk)) {
+            // In the case when a cookie has already been assigned,
+            // then there has been already an ioctl issued against
+            // an unbound socket and with that triggered an open
+            // notification. Send a close notification first to
+            // allow the state transition to bounded.
 
-		if (capable(CAP_NET_ADMIN))
-			hci_sock_set_flag(sk, HCI_SOCK_TRUSTED);
+            skb = create_monitor_ctrl_close(sk);
+            if (skb) {
+                hci_send_to_channel(HCI_CHANNEL_MONITOR, skb,
+                            HCI_SOCK_TRUSTED, NULL);
+                kfree_skb(skb);
+            }
+        }
 
-		hci_pi(sk)->hdev = hdev;
+        if (capable(CAP_NET_ADMIN))
+            hci_sock_set_flag(sk, HCI_SOCK_TRUSTED);
 
-		// Send event to monitor
-		skb = create_monitor_ctrl_open(sk);
-		if (skb) {
-			hci_send_to_channel(HCI_CHANNEL_MONITOR, skb,
-					    HCI_SOCK_TRUSTED, NULL);
-			kfree_skb(skb);
-		}
-		break;
+        hci_pi(sk)->hdev = hdev;
 
-	case HCI_CHANNEL_USER:
-		if (hci_pi(sk)->hdev) {
-			err = -EALREADY;
-			goto done;
-		}
+        // Send event to monitor
+        skb = create_monitor_ctrl_open(sk);
+        if (skb) {
+            hci_send_to_channel(HCI_CHANNEL_MONITOR, skb,
+                        HCI_SOCK_TRUSTED, NULL);
+            kfree_skb(skb);
+        }
+        break;
 
-		if (haddr.hci_dev == HCI_DEV_NONE) {
-			err = -EINVAL;
-			goto done;
-		}
+    case HCI_CHANNEL_USER:
+        if (hci_pi(sk)->hdev) {
+            err = -EALREADY;
+            goto done;
+        }
 
-		if (!capable(CAP_NET_ADMIN)) {
-			err = -EPERM;
-			goto done;
-		}
+        if (haddr.hci_dev == HCI_DEV_NONE) {
+            err = -EINVAL;
+            goto done;
+        }
 
-		hdev = hci_dev_get(haddr.hci_dev);
-		if (!hdev) {
-			err = -ENODEV;
-			goto done;
-		}
+        if (!capable(CAP_NET_ADMIN)) {
+            err = -EPERM;
+            goto done;
+        }
 
-		if (test_bit(HCI_INIT, &hdev->flags) ||
-		    hci_dev_test_flag(hdev, HCI_SETUP) ||
-		    hci_dev_test_flag(hdev, HCI_CONFIG) ||
-		    (!hci_dev_test_flag(hdev, HCI_AUTO_OFF) &&
-		     test_bit(HCI_UP, &hdev->flags))) {
-			err = -EBUSY;
-			hci_dev_put(hdev);
-			goto done;
-		}
+        hdev = hci_dev_get(haddr.hci_dev);
+        if (!hdev) {
+            err = -ENODEV;
+            goto done;
+        }
 
-		if (hci_dev_test_and_set_flag(hdev, HCI_USER_CHANNEL)) {
-			err = -EUSERS;
-			hci_dev_put(hdev);
-			goto done;
-		}
+        if (test_bit(HCI_INIT, &hdev->flags) ||
+            hci_dev_test_flag(hdev, HCI_SETUP) ||
+            hci_dev_test_flag(hdev, HCI_CONFIG) ||
+            (!hci_dev_test_flag(hdev, HCI_AUTO_OFF) &&
+             test_bit(HCI_UP, &hdev->flags))) {
+            err = -EBUSY;
+            hci_dev_put(hdev);
+            goto done;
+        }
 
-		mgmt_index_removed(hdev);
+        if (hci_dev_test_and_set_flag(hdev, HCI_USER_CHANNEL)) {
+            err = -EUSERS;
+            hci_dev_put(hdev);
+            goto done;
+        }
 
-		err = hci_dev_open(hdev->id);
-		if (err) {
-			if (err == -EALREADY) {
-				// In case the transport is already up and
-				// running, clear the error here.
+        mgmt_index_removed(hdev);
 
-				// This can happen when opening a user
-				// channel and HCI_AUTO_OFF grace period
-				// is still active.
+        err = hci_dev_open(hdev->id);
+        if (err) {
+            if (err == -EALREADY) {
+                // In case the transport is already up and
+                // running, clear the error here.
 
-				err = 0;
-			} else {
-				hci_dev_clear_flag(hdev, HCI_USER_CHANNEL);
-				mgmt_index_added(hdev);
-				hci_dev_put(hdev);
-				goto done;
-			}
-		}
+                // This can happen when opening a user
+                // channel and HCI_AUTO_OFF grace period
+                // is still active.
 
-		hci_pi(sk)->channel = haddr.hci_channel;
+                err = 0;
+            } else {
+                hci_dev_clear_flag(hdev, HCI_USER_CHANNEL);
+                mgmt_index_added(hdev);
+                hci_dev_put(hdev);
+                goto done;
+            }
+        }
 
-		if (!hci_sock_gen_cookie(sk)) {
-			// In the case when a cookie has already been assigned,
-			// this socket will transition from a raw socket into
-			// a user channel socket. For a clean transition, send
-			// the close notification first.
+        hci_pi(sk)->channel = haddr.hci_channel;
 
-			skb = create_monitor_ctrl_close(sk);
-			if (skb) {
-				hci_send_to_channel(HCI_CHANNEL_MONITOR, skb,
-						    HCI_SOCK_TRUSTED, NULL);
-				kfree_skb(skb);
-			}
-		}
+        if (!hci_sock_gen_cookie(sk)) {
+            // In the case when a cookie has already been assigned,
+            // this socket will transition from a raw socket into
+            // a user channel socket. For a clean transition, send
+            // the close notification first.
 
-		// The user channel is restricted to CAP_NET_ADMIN
-		// capabilities and with that implicitly trusted.
+            skb = create_monitor_ctrl_close(sk);
+            if (skb) {
+                hci_send_to_channel(HCI_CHANNEL_MONITOR, skb,
+                            HCI_SOCK_TRUSTED, NULL);
+                kfree_skb(skb);
+            }
+        }
 
-		hci_sock_set_flag(sk, HCI_SOCK_TRUSTED);
+        // The user channel is restricted to CAP_NET_ADMIN
+        // capabilities and with that implicitly trusted.
 
-		hci_pi(sk)->hdev = hdev;
+        hci_sock_set_flag(sk, HCI_SOCK_TRUSTED);
 
-		// Send event to monitor
-		skb = create_monitor_ctrl_open(sk);
-		if (skb) {
-			hci_send_to_channel(HCI_CHANNEL_MONITOR, skb,
-					    HCI_SOCK_TRUSTED, NULL);
-			kfree_skb(skb);
-		}
+        hci_pi(sk)->hdev = hdev;
 
-		atomic_inc(&hdev->promisc);
-		break;
+        // Send event to monitor
+        skb = create_monitor_ctrl_open(sk);
+        if (skb) {
+            hci_send_to_channel(HCI_CHANNEL_MONITOR, skb,
+                        HCI_SOCK_TRUSTED, NULL);
+            kfree_skb(skb);
+        }
 
-	case HCI_CHANNEL_MONITOR:
-		if (haddr.hci_dev != HCI_DEV_NONE) {
-			err = -EINVAL;
-			goto done;
-		}
+        atomic_inc(&hdev->promisc);
+        break;
 
-		if (!capable(CAP_NET_RAW)) {
-			err = -EPERM;
-			goto done;
-		}
+    case HCI_CHANNEL_MONITOR:
+        if (haddr.hci_dev != HCI_DEV_NONE) {
+            err = -EINVAL;
+            goto done;
+        }
 
-		hci_pi(sk)->channel = haddr.hci_channel;
+        if (!capable(CAP_NET_RAW)) {
+            err = -EPERM;
+            goto done;
+        }
 
-		// The monitor interface is restricted to CAP_NET_RAW
-		// capabilities and with that implicitly trusted.
+        hci_pi(sk)->channel = haddr.hci_channel;
 
-		hci_sock_set_flag(sk, HCI_SOCK_TRUSTED);
+        // The monitor interface is restricted to CAP_NET_RAW
+        // capabilities and with that implicitly trusted.
 
-		send_monitor_note(sk, "Linux version %s (%s)",
-				  init_utsname()->release,
-				  init_utsname()->machine);
-		send_monitor_note(sk, "Bluetooth subsystem version %u.%u",
-				  BT_SUBSYS_VERSION, BT_SUBSYS_REVISION);
-		send_monitor_replay(sk);
-		send_monitor_control_replay(sk);
+        hci_sock_set_flag(sk, HCI_SOCK_TRUSTED);
 
-		atomic_inc(&monitor_promisc);
-		break;
+        send_monitor_note(sk, "Linux version %s (%s)",
+                  init_utsname()->release,
+                  init_utsname()->machine);
+        send_monitor_note(sk, "Bluetooth subsystem version %u.%u",
+                  BT_SUBSYS_VERSION, BT_SUBSYS_REVISION);
+        send_monitor_replay(sk);
+        send_monitor_control_replay(sk);
 
-	case HCI_CHANNEL_LOGGING:
-		if (haddr.hci_dev != HCI_DEV_NONE) {
-			err = -EINVAL;
-			goto done;
-		}
+        atomic_inc(&monitor_promisc);
+        break;
 
-		if (!capable(CAP_NET_ADMIN)) {
-			err = -EPERM;
-			goto done;
-		}
+    case HCI_CHANNEL_LOGGING:
+        if (haddr.hci_dev != HCI_DEV_NONE) {
+            err = -EINVAL;
+            goto done;
+        }
 
-		hci_pi(sk)->channel = haddr.hci_channel;
-		break;
+        if (!capable(CAP_NET_ADMIN)) {
+            err = -EPERM;
+            goto done;
+        }
 
-	default:
-		if (!hci_mgmt_chan_find(haddr.hci_channel)) {
-			err = -EINVAL;
-			goto done;
-		}
+        hci_pi(sk)->channel = haddr.hci_channel;
+        break;
 
-		if (haddr.hci_dev != HCI_DEV_NONE) {
-			err = -EINVAL;
-			goto done;
-		}
+    default:
+        if (!hci_mgmt_chan_find(haddr.hci_channel)) {
+            err = -EINVAL;
+            goto done;
+        }
 
-		// Users with CAP_NET_ADMIN capabilities are allowed
-		// access to all management commands and events. For
-		// untrusted users the interface is restricted and
-		// also only untrusted events are sent.
+        if (haddr.hci_dev != HCI_DEV_NONE) {
+            err = -EINVAL;
+            goto done;
+        }
 
-		if (capable(CAP_NET_ADMIN))
-			hci_sock_set_flag(sk, HCI_SOCK_TRUSTED);
+        // Users with CAP_NET_ADMIN capabilities are allowed
+        // access to all management commands and events. For
+        // untrusted users the interface is restricted and
+        // also only untrusted events are sent.
 
-		hci_pi(sk)->channel = haddr.hci_channel;
+        if (capable(CAP_NET_ADMIN))
+            hci_sock_set_flag(sk, HCI_SOCK_TRUSTED);
 
-		// At the moment the index and unconfigured index events
-		// are enabled unconditionally. Setting them on each
-		// socket when binding keeps this functionality. They
-		// however might be cleared later and then sending of these
-		// events will be disabled, but that is then intentional.
+        hci_pi(sk)->channel = haddr.hci_channel;
 
-		// This also enables generic events that are safe to be
-		// received by untrusted users. Example for such events
-		// are changes to settings, class of device, name etc.
+        // At the moment the index and unconfigured index events
+        // are enabled unconditionally. Setting them on each
+        // socket when binding keeps this functionality. They
+        // however might be cleared later and then sending of these
+        // events will be disabled, but that is then intentional.
 
-		if (hci_pi(sk)->channel == HCI_CHANNEL_CONTROL) {
-			if (!hci_sock_gen_cookie(sk)) {
-				// In the case when a cookie has already been
-				// assigned, this socket will transition from
-				// a raw socket into a control socket. To
-				// allow for a clean transition, send the
-				// close notification first.
+        // This also enables generic events that are safe to be
+        // received by untrusted users. Example for such events
+        // are changes to settings, class of device, name etc.
 
-				skb = create_monitor_ctrl_close(sk);
-				if (skb) {
-					hci_send_to_channel(HCI_CHANNEL_MONITOR, skb,
-							    HCI_SOCK_TRUSTED, NULL);
-					kfree_skb(skb);
-				}
-			}
+        if (hci_pi(sk)->channel == HCI_CHANNEL_CONTROL) {
+            if (!hci_sock_gen_cookie(sk)) {
+                // In the case when a cookie has already been
+                // assigned, this socket will transition from
+                // a raw socket into a control socket. To
+                // allow for a clean transition, send the
+                // close notification first.
 
-			// Send event to monitor
-			skb = create_monitor_ctrl_open(sk);
-			if (skb) {
-				hci_send_to_channel(HCI_CHANNEL_MONITOR, skb,
-						    HCI_SOCK_TRUSTED, NULL);
-				kfree_skb(skb);
-			}
+                skb = create_monitor_ctrl_close(sk);
+                if (skb) {
+                    hci_send_to_channel(HCI_CHANNEL_MONITOR, skb,
+                                HCI_SOCK_TRUSTED, NULL);
+                    kfree_skb(skb);
+                }
+            }
 
-			hci_sock_set_flag(sk, HCI_MGMT_INDEX_EVENTS);
-			hci_sock_set_flag(sk, HCI_MGMT_UNCONF_INDEX_EVENTS);
-			hci_sock_set_flag(sk, HCI_MGMT_OPTION_EVENTS);
-			hci_sock_set_flag(sk, HCI_MGMT_SETTING_EVENTS);
-			hci_sock_set_flag(sk, HCI_MGMT_DEV_CLASS_EVENTS);
-			hci_sock_set_flag(sk, HCI_MGMT_LOCAL_NAME_EVENTS);
-		}
-		break;
-	}
+            // Send event to monitor
+            skb = create_monitor_ctrl_open(sk);
+            if (skb) {
+                hci_send_to_channel(HCI_CHANNEL_MONITOR, skb,
+                            HCI_SOCK_TRUSTED, NULL);
+                kfree_skb(skb);
+            }
 
-	sk->sk_state = BT_BOUND;
+            hci_sock_set_flag(sk, HCI_MGMT_INDEX_EVENTS);
+            hci_sock_set_flag(sk, HCI_MGMT_UNCONF_INDEX_EVENTS);
+            hci_sock_set_flag(sk, HCI_MGMT_OPTION_EVENTS);
+            hci_sock_set_flag(sk, HCI_MGMT_SETTING_EVENTS);
+            hci_sock_set_flag(sk, HCI_MGMT_DEV_CLASS_EVENTS);
+            hci_sock_set_flag(sk, HCI_MGMT_LOCAL_NAME_EVENTS);
+        }
+        break;
+    }
+
+    sk->sk_state = BT_BOUND;
 
 done:
-	release_sock(sk);
-	return err;
+    release_sock(sk);
+    return err;
     */
     return 0;
 }
@@ -1365,9 +1381,9 @@ static int hci_sock_getname(struct socket *sock, struct sockaddr *addr,
 
 	lock_sock(sk);
 
-	hdev = hci_pi(sk)->hdev;
-	if (!hdev) {
-		err = -EBADFD;
+	hdev = hci_hdev_from_sock(sk);
+	if (IS_ERR(hdev)) {
+		err = PTR_ERR(hdev);
 		goto done;
 	}
 
@@ -1729,9 +1745,9 @@ static int hci_sock_sendmsg(struct socket *sock, struct msghdr *msg,
 		goto done;
 	}
 
-	hdev = hci_pi(sk)->hdev;
-	if (!hdev) {
-		err = -EBADFD;
+	hdev = hci_hdev_from_sock(sk);
+	if (IS_ERR(hdev)) {
+		err = PTR_ERR(hdev);
 		goto done;
 	}
 
