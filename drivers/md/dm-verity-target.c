@@ -546,34 +546,33 @@ static int verity_verify_io(struct dm_verity_io *io)
 			continue;
 		}
 		else if (verity_fec_decode(v, io, DM_VERITY_BLOCK_TYPE_DATA,
-					   cur_block, NULL, &start) == 0) {
+                       cur_block, NULL, &start) == 0) {
 #ifdef SEC_HEX_DEBUG
-			add_fec_correct_blks();
-			add_fc_blks_entry(cur_block,v->data_dev->name);
+            add_fec_correct_blks();
+            add_fc_blks_entry(cur_block,v->data_dev->name);
 #endif
-			continue;
-		}
-		else {
-			if (bio->bi_status) {
-				/*
-				 * Error correction failed; Just return error
-				 */
-				return -EIO;
-			}
+            continue;
+        } else {
+            if (bio->bi_status) {
+                /*
+                 * Error correction failed; Just return error
+                 */
+                return -EIO;
+            }
 #ifdef SEC_HEX_DEBUG
-			if (verity_handle_err_hex_debug(v, DM_VERITY_BLOCK_TYPE_DATA,
-					cur_block, io, &start)) {
-				add_corrupted_blks();
+            if (verity_handle_err_hex_debug(v, DM_VERITY_BLOCK_TYPE_DATA,
+                    cur_block, io, &start)) {
+                add_corrupted_blks();
 #else
-			if (verity_handle_err(v, DM_VERITY_BLOCK_TYPE_DATA,
-					cur_block)) {
+            if (verity_handle_err(v, DM_VERITY_BLOCK_TYPE_DATA,
+                    cur_block)) {
 #endif
-				return -EIO;
-			}
-		}
-	}
+                return -EIO;
+            }
+        }
+    }
 
-	return 0;
+    return 0;
 }
 
 /*
