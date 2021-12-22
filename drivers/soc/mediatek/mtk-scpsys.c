@@ -715,11 +715,11 @@ static int init_subsys_clks(struct platform_device *pdev,
 			clk[sub_clk_cnt] = devm_clk_get(&pdev->dev,
 						clk_name);
 
-			if (IS_ERR(clk)) {
+			if (IS_ERR(clk[sub_clk_cnt])) {
 				dev_err(&pdev->dev,
 					"Subsys clk read fail %ld\n",
-					PTR_ERR(clk));
-				return PTR_ERR(clk);
+					PTR_ERR(clk[sub_clk_cnt]));
+				return PTR_ERR(clk[sub_clk_cnt]);
 			}
 			sub_clk_cnt++;
 		}
@@ -728,12 +728,17 @@ static int init_subsys_clks(struct platform_device *pdev,
 	return sub_clk_cnt;
 }
 
-static void init_clks(struct platform_device *pdev, struct clk **clk)
+static int init_clks(struct platform_device *pdev, struct clk **clk)
 {
 	int i;
 
-	for (i = CLK_NONE + 1; i < CLK_MAX; i++)
+	for (i = CLK_NONE + 1; i < CLK_MAX; i++) {
 		clk[i] = devm_clk_get(&pdev->dev, clk_names[i]);
+		if (IS_ERR(clk[i]))
+			return PTR_ERR(clk[i]);
+	}
+
+	return 0;
 }
 
 static int mtk_pd_set_performance(struct generic_pm_domain *genpd,
@@ -788,7 +793,7 @@ static struct scp *init_scp(struct platform_device *pdev,
 {
 	struct genpd_onecell_data *pd_data;
 	struct resource *res;
-	int i, j, count;
+	int i, j, count, ret;
 	struct scp *scp;
 	struct clk *clk[CLK_MAX];
 
@@ -865,7 +870,9 @@ static struct scp *init_scp(struct platform_device *pdev,
 
 	pd_data->num_domains = num;
 
-	init_clks(pdev, clk);
+	ret = init_clks(pdev, clk);
+	if (ret)
+		return ERR_PTR(ret);
 
 	for (i = 0; i < num; i++) {
 		struct scp_domain *scpd = &scp->domains[i];
@@ -893,9 +900,17 @@ static struct scp *init_scp(struct platform_device *pdev,
 			}
 		} else if (data->basic_clk_name[0]) {
 			for (j = 0; j < MAX_CLKS &&
-					data->basic_clk_name[j]; j++)
+					data->basic_clk_name[j]; j++) {
 				scpd->clk[j] = devm_clk_get(&pdev->dev,
 						data->basic_clk_name[j]);
+				if (IS_ERR(scpd->clk[j])) {
+					dev_err(&pdev->dev,
+						"%s: basic clk %s unavailable\n",
+						data->name,
+						data->basic_clk_name[j]);
+					return ERR_CAST(scpd->clk[j]);
+				}
+			}
 		}
 
 		if (data->subsys_clk_prefix) {
