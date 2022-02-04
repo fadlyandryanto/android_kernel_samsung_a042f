@@ -1922,55 +1922,55 @@ static int mmc_blk_fix_state(struct mmc_card *card, struct request *req)
 /* Single sector read during recovery */
 static void mmc_blk_read_single(struct mmc_queue *mq, struct request *req)
 {
-	struct mmc_queue_req *mqrq = req_to_mmc_queue_req(req);
-	struct mmc_request *mrq = &mqrq->brq.mrq;
-	struct mmc_card *card = mq->card;
-	struct mmc_host *host = card->host;
-	blk_status_t error = BLK_STS_OK;
+    struct mmc_queue_req *mqrq = req_to_mmc_queue_req(req);
+    struct mmc_request *mrq = &mqrq->brq.mrq;
+    struct mmc_card *card = mq->card;
+    struct mmc_host *host = card->host;
+    blk_status_t error = BLK_STS_OK;
 
-	do {
-		u32 status;
-		int err;
-		int retries = 0;
+    do {
+        u32 status;
+        int err;
+        int retries = 0;
 
-		while (retries++ <= MMC_READ_SINGLE_RETRIES) {
-			mmc_blk_rw_rq_prep(mqrq, card, 1, mq);
+        while (retries++ <= MMC_READ_SINGLE_RETRIES) {
+            mmc_blk_rw_rq_prep(mqrq, card, 1, mq);
 
-			mmc_wait_for_req(host, mrq);
-			err = mmc_send_status(card, &status);
-			if (err)
-				goto error_exit;
+            mmc_wait_for_req(host, mrq);
 
-			if (!mmc_host_is_spi(host) &&
-				!mmc_blk_in_tran_state(status)) {
-				err = mmc_blk_fix_state(card, req);
-				if (err)
-					goto error_exit;
-			}
+            err = mmc_send_status(card, &status);
+            if (err)
+                goto error_exit;
 
-			if (!mrq->cmd->error)
-				break;
+            if (!mmc_host_is_spi(host) &&
+                !mmc_blk_in_tran_state(status)) {
+                err = mmc_blk_fix_state(card, req);
+                if (err)
+                    goto error_exit;
+            }
 
-		}
+            if (!mrq->cmd->error)
+                break;
+        }
 
-		if (mrq->cmd->error ||
-		    mrq->data->error ||
-		    (!mmc_host_is_spi(host) &&
-		     (mrq->cmd->resp[0] & CMD_ERRORS || status & CMD_ERRORS)))
-			error = BLK_STS_IOERR;
-		else
-			error = BLK_STS_OK;
+        if (mrq->cmd->error ||
+            mrq->data->error ||
+            (!mmc_host_is_spi(host) &&
+             (mrq->cmd->resp[0] & CMD_ERRORS || status & CMD_ERRORS)))
+            error = BLK_STS_IOERR;
+        else
+            error = BLK_STS_OK;
 
-	} while (blk_update_request(req, error, 512));
+    } while (blk_update_request(req, error, 512));
 
-	return;
+    return;
 
 error_exit:
-	mrq->data->bytes_xfered = 0;
-	blk_update_request(req, BLK_STS_IOERR, 512);
-	/* Let it try the remaining request again */
-	if (mqrq->retries > MMC_MAX_RETRIES - 1)
-		mqrq->retries = MMC_MAX_RETRIES - 1;
+    mrq->data->bytes_xfered = 0;
+    blk_update_request(req, BLK_STS_IOERR, 512);
+    /* Let it try the remaining request again */
+    if (mqrq->retries > MMC_MAX_RETRIES - 1)
+        mqrq->retries = MMC_MAX_RETRIES - 1;
 }
 
 static inline bool mmc_blk_oor_valid(struct mmc_blk_request *brq)
