@@ -1362,7 +1362,7 @@ loop_set_status(struct loop_device *lo, const struct loop_info64 *info)
 	blk_mq_freeze_queue(lo->lo_queue);
 
 	if (size_changed && lo->lo_device->bd_inode->i_mapping->nrpages) {
-		/* If any pages were dirtied after kill_bdev(), try again */
+		/* If any pages were dirtied after invalidate_bdev(), try again */
 		err = -EAGAIN;
 		pr_warn("%s: loop%d (%s) has still dirty pages (nrpages=%lu)\n",
 			__func__, lo->lo_number, lo->lo_file_name,
