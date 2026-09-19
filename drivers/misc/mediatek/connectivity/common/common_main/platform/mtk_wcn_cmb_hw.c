@@ -282,13 +282,13 @@ INT32 mtk_wcn_cmb_hw_rst(VOID)
 
 static VOID mtk_wcn_cmb_hw_dmp_seq(VOID)
 {
-	PUINT32 pTimeSlot = (PUINT32) &gPwrSeqTime;
-
 	WMT_INFO_FUNC
 	    ("combo chip power on sequence time, RTC (%d), LDO (%d), RST(%d), OFF(%d), ON(%d)\n",
-	     pTimeSlot[0],
-		      /**pTimeSlot++,*/
-	     pTimeSlot[1], pTimeSlot[2], pTimeSlot[3], pTimeSlot[4]
+	     gPwrSeqTime.rtcStableTime,
+	     gPwrSeqTime.ldoStableTime,
+	     gPwrSeqTime.rstStableTime,
+	     gPwrSeqTime.offStableTime,
+	     gPwrSeqTime.onStableTime
 	    );
 }
 
