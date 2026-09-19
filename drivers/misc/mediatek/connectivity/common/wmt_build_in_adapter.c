@@ -34,7 +34,7 @@
 /*******************************************************************************
  * Connsys adaptation layer logging utility
  ******************************************************************************/
-static unsigned int gConnAdpDbgLvl = CONNADP_LOG_INFO;
+static unsigned int gConnAdpDbgLvl __maybe_unused = CONNADP_LOG_INFO;
 
 #ifdef CONFIG_MTK_DISABLE_CONNECTIVITY_LOG
 #define CONNADP_LOUD_FUNC(fmt, arg...)
