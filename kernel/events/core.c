@@ -406,6 +406,21 @@ static cpumask_var_t perf_online_mask;
  */
 int sysctl_perf_event_paranoid __read_mostly = 2;
 
+static inline bool perf_paranoid_tracepoint_raw(void)
+{
+	return sysctl_perf_event_paranoid > -1;
+}
+
+static inline bool perf_paranoid_cpu(void)
+{
+	return sysctl_perf_event_paranoid > 0;
+}
+
+static inline bool perf_paranoid_kernel(void)
+{
+	return sysctl_perf_event_paranoid > 1;
+}
+
 /* Minimum for 512 kiB + 1 user control page */
 int sysctl_perf_event_mlock __read_mostly = 512 + (PAGE_SIZE / 1024); /* 'free' kiB per user */
 
