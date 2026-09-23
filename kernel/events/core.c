@@ -3319,13 +3319,10 @@ static int flexible_sched_in(struct perf_event *event, void *data)
 		return 0;
 
 	if (group_can_go_on(event, sid->cpuctx, sid->can_add_hw)) {
-		int ret = group_sched_in(event, sid->cpuctx, sid->ctx);
-		if (ret) {
+		if (!group_sched_in(event, sid->cpuctx, sid->ctx))
+			list_add_tail(&event->active_list, &sid->ctx->flexible_active);
+		else
 			sid->can_add_hw = 0;
-			sid->ctx->rotate_necessary = 1;
-			return 0;
-		}
-		list_add_tail(&event->active_list, &sid->ctx->flexible_active);
 	}
 
 	return 0;
@@ -3691,19 +3688,12 @@ ctx_event_to_rotate(struct perf_event_context *ctx)
 
 	/* pick the first active flexible event */
 	event = list_first_entry_or_null(&ctx->flexible_active,
-					 struct perf_event, active_list);
+					struct perf_event, active_list);
 
 	/* if no active flexible event, pick the first event */
-	if (!event) {
+	if (!event)
 		event = rb_entry_safe(rb_first(&ctx->flexible_groups.tree),
-				      typeof(*event), group_node);
-	}
-
-	/*
-	 * Unconditionally clear rotate_necessary; if ctx_flexible_sched_in()
-	 * finds there are unschedulable events, it will set it again.
-	 */
-	ctx->rotate_necessary = 0;
+				typeof(*event), group_node);
 
 	return event;
 }
@@ -3712,16 +3702,23 @@ static bool perf_rotate_context(struct perf_cpu_context *cpuctx)
 {
 	struct perf_event *cpu_event = NULL, *task_event = NULL;
 	struct perf_event_context *task_ctx = NULL;
-	int cpu_rotate, task_rotate;
+	bool cpu_rotate = false, task_rotate = false;
 
 	/*
 	 * Since we run this from IRQ context, nobody can install new
 	 * events, thus the event count values are stable.
 	 */
 
-	cpu_rotate = cpuctx->ctx.rotate_necessary;
+	if (cpuctx->ctx.nr_events) {
+		if (cpuctx->ctx.nr_events != cpuctx->ctx.nr_active)
+			cpu_rotate = true;
+	}
+
 	task_ctx = cpuctx->task_ctx;
-	task_rotate = task_ctx ? task_ctx->rotate_necessary : 0;
+	if (task_ctx && task_ctx->nr_events) {
+		if (task_ctx->nr_events != task_ctx->nr_active)
+			task_rotate = true;
+	}
 
 	if (!(cpu_rotate || task_rotate))
 		return false;
