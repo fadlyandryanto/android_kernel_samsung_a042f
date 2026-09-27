@@ -991,8 +991,10 @@ void blk_unregister_queue(struct gendisk *disk)
 	 * concurrent elv_iosched_store() calls.
 	 */
 	mutex_lock(&q->sysfs_lock);
-
 	blk_queue_flag_clear(QUEUE_FLAG_REGISTERED, q);
+	mutex_unlock(&q->sysfs_lock);
+
+	mutex_lock(&q->sysfs_dir_lock);
 
 	/*
 	 * Remove the sysfs attributes before unregistering the queue data
