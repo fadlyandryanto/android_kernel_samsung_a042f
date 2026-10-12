@@ -1,4 +1,4 @@
-name: Build Kernel
+name: Build Kernel (manual)
 
 on:
   workflow_dispatch:
@@ -13,16 +13,41 @@ permissions:
 
 jobs:
   build:
-    name: Build & Release
+    name: Build ${{ matrix.variant }}
     runs-on: ubuntu-22.04
     timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [stock, bakasu]
 
     steps:
       - name: Checkout kernel source
         uses: actions/checkout@v4
         with:
-          fetch-depth: 1
+          ref: a04e
+          fetch-depth: 0
           submodules: false
+
+      # Compute metadata BEFORE applying patches, so both variants
+      # report the same base SHA in their zip filenames.
+      - name: Get kernel version and short SHA
+        id: meta
+        run: |
+          VERSION=$(make -s kernelversion)
+          SHORT_SHA=$(git rev-parse --short=7 HEAD)
+          echo "version=${VERSION}"     >> "$GITHUB_OUTPUT"
+          echo "short_sha=${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+
+      - name: Apply BakaSU + SusFS patches
+        if: matrix.variant == 'bakasu'
+        run: |
+          git config user.name  "CI"
+          git config user.email "ci@localhost"
+          git am patches/bakasu/*.patch
+          git submodule update --init --recursive
+          echo "----- submodule status -----"
+          git submodule status
 
       - name: Install build dependencies
         run: |
@@ -49,12 +74,6 @@ jobs:
           chmod +x ~/clang-r383902/bin/*
           ~/clang-r383902/bin/clang --version
 
-      - name: Verify toolchain
-        run: |
-          ~/clang-r383902/bin/clang --version
-          /usr/bin/aarch64-linux-gnu-as --version | head -1
-          /usr/bin/aarch64-linux-gnu-ld --version | head -1
-
       - name: Configure kernel (a04e_defconfig)
         run: |
           make -C $(pwd) O=$(pwd)/out ARCH=arm64 \
@@ -74,70 +93,138 @@ jobs:
                -j$(nproc)
 
       - name: Verify kernel image
-        run: |
-          ls -la out/arch/arm64/boot/Image.gz
+        run: ls -la out/arch/arm64/boot/Image.gz
 
       - name: Clone AnyKernel3
         run: |
           git clone --depth=1 https://github.com/fadlyandryanto/AnyKernel3.git ak3
-          ls -la ak3/
 
-      - name: Pack kernel into AnyKernel3
+      - name: Pack kernel
+        id: pack
         run: |
           set -e
-
-          # Only the kernel image — no modules, no DTBs
           cp out/arch/arm64/boot/Image.gz ak3/Image.gz
 
+          ZIP_NAME="AnyKernel3-a04e-${{ matrix.variant }}-${{ steps.meta.outputs.version }}-${{ steps.meta.outputs.short_sha }}.zip"
+
           cd ak3
-          zip -r9 ../AnyKernel3-a04e.zip . \
-              -x ".git/*" \
-              -x ".github/*" \
-              -x "README.md" \
-              -x ".gitignore"
-
+          zip -r9 "../${ZIP_NAME}" . \
+              -x ".git/*" -x ".github/*" -x "README.md" -x ".gitignore"
           cd ..
-          ls -la AnyKernel3-a04e.zip
 
-      - name: Upload artifact (backup)
+          echo "zip_name=${ZIP_NAME}" >> "$GITHUB_OUTPUT"
+          ls -la "${ZIP_NAME}"
+
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: AnyKernel3-a04e-${{ github.run_number }}
-          path: |
-            AnyKernel3-a04e.zip
-            out/arch/arm64/boot/Image.gz
+          name: zip-${{ matrix.variant }}
+          path: ${{ steps.pack.outputs.zip_name }}
           retention-days: 30
 
-      - name: Delete existing continuous release
+  release:
+    name: Publish release
+    needs: build
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout kernel source
+        uses: actions/checkout@v4
+        with:
+          ref: a04e
+          fetch-depth: 0
+
+      - name: Get kernel version and short SHA
+        id: meta
         run: |
-          gh release delete continuous --yes --cleanup-tag 2>/dev/null || true
+          VERSION=$(make -s kernelversion)
+          SHORT_SHA=$(git rev-parse --short=7 HEAD)
+          echo "version=${VERSION}"     >> "$GITHUB_OUTPUT"
+          echo "short_sha=${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: List artifacts
+        run: ls -la artifacts/
+
+      - name: Generate release notes
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+          SHORT_SHA: ${{ steps.meta.outputs.short_sha }}
+          REPO: ${{ github.repository }}
+          ACTOR: ${{ github.actor }}
+          RUN_NUMBER: ${{ github.run_number }}
+          FULL_SHA: ${{ github.sha }}
+          USER_NOTES: ${{ github.event.inputs.release_notes }}
+        run: |
+          cat > RELEASE_NOTES.md <<EOF
+          **Manually triggered kernel build for Samsung Galaxy A04e (MT6765)**
+
+          | | |
+          |---|---|
+          | **Kernel**   | \`${VERSION}\` |
+          | **Commit**   | [\`${SHORT_SHA}\`](https://github.com/${REPO}/commit/${FULL_SHA}) |
+          | **Build**    | #${RUN_NUMBER}, dispatched by @${ACTOR} |
+
+          ### Variants included in this release
+
+          | Variant | File | Description |
+          |---|---|---|
+          | **stock**  | \`AnyKernel3-a04e-stock-${VERSION}-${SHORT_SHA}.zip\`  | Plain a04e kernel, no root |
+          | **bakasu** | \`AnyKernel3-a04e-bakasu-${VERSION}-${SHORT_SHA}.zip\` | BakaSU + SusFS v2.3.0 |
+
+          EOF
+
+          if [ -n "${USER_NOTES}" ]; then
+            echo "### Build notes from dispatcher" >> RELEASE_NOTES.md
+            echo "" >> RELEASE_NOTES.md
+            echo "${USER_NOTES}" >> RELEASE_NOTES.md
+            echo "" >> RELEASE_NOTES.md
+          fi
+
+          cat >> RELEASE_NOTES.md <<EOF
+          ### Recent commits (last 20)
+
+          EOF
+
+          git log --no-merges -20 \
+            --pretty=format:"- [\`%h\`](https://github.com/${REPO}/commit/%H) %s" \
+            >> RELEASE_NOTES.md
+          echo "" >> RELEASE_NOTES.md
+          echo "" >> RELEASE_NOTES.md
+          echo "[Full commit history on \`a04e\`](https://github.com/${REPO}/commits/a04e)" >> RELEASE_NOTES.md
+
+          cat >> RELEASE_NOTES.md <<EOF
+
+          ---
+
+          **Flash via AnyKernel3** — flash the zip matching your variant in a custom
+          recovery (TWRP / OrangeFox) on top of your existing boot image.
+
+          **Toolchain:** clang-r383902 + binutils-aarch64-linux-gnu
+          EOF
+
+          echo "----- RELEASE NOTES -----"
+          cat RELEASE_NOTES.md
+
+      - name: Delete existing release
+        run: |
+          gh release delete "a04e-latest" --yes --cleanup-tag 2>/dev/null || true
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Create continuous release
+      - name: Create release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: continuous
-          name: "Continuous Build"
-          body: |
-            **Auto-built kernel for Samsung Galaxy A04e (a04e / MT6765)**
-
-            - Commit: `${{ github.sha }}`
-            - Triggered by: @${{ github.actor }}
-            - Run: #${{ github.run_number }}
-
-            ${{ github.event.inputs.release_notes }}
-
-            **Flash via AnyKernel3** — flash `AnyKernel3-a04e.zip` in a custom recovery
-            (TWRP/OrangeFox) on top of your existing LineageOS boot image.
-
-            **Toolchain:** clang-r383902 + binutils-aarch64-linux-gnu
-
-            **Note:** Kernel image only. Modules are not packaged —
-            this kernel is intended for custom ROMs where everything
-            needed is either built-in or shipped with the ROM.
-          prerelease: true
-          files: AnyKernel3-a04e.zip
+          tag_name: a04e-latest
+          name: "a04e — ${{ steps.meta.outputs.version }} (${{ steps.meta.outputs.short_sha }})"
+          body_path: RELEASE_NOTES.md
+          prerelease: false
+          files: artifacts/*.zip
           fail_on_unmatched_files: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

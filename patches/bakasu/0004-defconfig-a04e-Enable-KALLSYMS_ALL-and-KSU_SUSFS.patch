@@ -1,0 +1,39 @@
+From 7922429ce0d32a2b812311c46d7874dfef889f38 Mon Sep 17 00:00:00 2001
+From: fadlyandryanto <fa.andryanto@gmail.com>
+Date: Fri, 9 Oct 2026 03:56:26 +0800
+Subject: [PATCH 4/4] defconfig: a04e: Enable KALLSYMS_ALL and KSU_SUSFS
+
+---
+ arch/arm64/configs/a04e_defconfig | 12 +++++++++++-
+ 1 file changed, 11 insertions(+), 1 deletion(-)
+
+diff --git a/arch/arm64/configs/a04e_defconfig b/arch/arm64/configs/a04e_defconfig
+index c63ca74d9e6e..3ee46af1bcaf 100644
+--- a/arch/arm64/configs/a04e_defconfig
++++ b/arch/arm64/configs/a04e_defconfig
+@@ -197,7 +197,7 @@ CONFIG_AIO=y
+ CONFIG_ADVISE_SYSCALLS=y
+ CONFIG_MEMBARRIER=y
+ CONFIG_KALLSYMS=y
+-# CONFIG_KALLSYMS_ALL is not set
++CONFIG_KALLSYMS_ALL=y
+ # CONFIG_KALLSYMS_BASE_RELATIVE is not set
+ CONFIG_BPF_SYSCALL=y
+ CONFIG_BPF_JIT_ALWAYS_ON=y
+@@ -5901,3 +5901,13 @@ CONFIG_CORESIGHT_STM=y
+ CONFIG_HQ_PROJECT_HS04=y
+ # CONFIG_HQ_PROJECT_O22 is not set
+ # CONFIG_HQ_PROJECT_A06 is not set
++CONFIG_KSU_SUSFS=y
++CONFIG_KSU_SUSFS_SUS_PATH=y
++CONFIG_KSU_SUSFS_SUS_MOUNT=y
++CONFIG_KSU_SUSFS_SUS_KSTAT=y
++CONFIG_KSU_SUSFS_SPOOF_UNAME=y
++CONFIG_KSU_SUSFS_ENABLE_LOG=y
++CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y
++CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
++CONFIG_KSU_SUSFS_SUS_MAP=y
++CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y
+-- 
+2.55.0
+
